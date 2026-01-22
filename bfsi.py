@@ -70,14 +70,14 @@ class BrainFuckSharp:
         ptr = 0
         i = 0
         code = BrainFuckSharp.parse(code)
-        tokens = re.findall(r'[+\-<>\[\].,%!?^#\{\}\(\)]|\$\d+|&\d+|\*\d+|"(?:[^"]|\\.)*"|/\d*/|~\d+', code)
+        tokens = re.findall(r'[+\-<>\[\].,%!?^#\{\}\(\)]|\$\d+|&\d+|\*\d+|"(?:[^"]|\\.)*"|/\d*/|~\d+|r`[^`]*`|w`[^`]*`', code)
         loop_stack = [[], []]
 
         while i < len(tokens):
             token = tokens[i]
             match token:
-                case '+': cells[ptr] = (cells[ptr] + 1) % 256
-                case '-': cells[ptr] = (cells[ptr] - 1) % 256
+                case '+': cells[ptr] = (cells[ptr] + 1) % sys.maxunicode
+                case '-': cells[ptr] = (cells[ptr] - 1) % sys.maxunicode
                 case '>': ptr = (ptr + 1) % cells_size
                 case '<': ptr = (ptr - 1) % cells_size
                 case '.': print(chr(cells[ptr]), end='')
@@ -168,12 +168,29 @@ class BrainFuckSharp:
                             BrainFuckSharp.std.err.write(stack[errIndex-1])
                         case '~':
                             sys.exit(int(token[1:]) if len(token) > 1 else 0)
+                        case 'r':
+                            file = token[2:-1]
+                            try:
+                                with open(file, 'r') as f:
+                                    content = f.read()
+                                stack.append(content)
+                            except Exception as e:
+                                BrainFuckSharp.std.err.write(f"FileError: Could not read file '{file}'")
+                                sys.exit(1)
+                        case 'w':
+                            file = token[2:-1]
+                            try:
+                                with open(file, 'w') as f:
+                                    f.write(str(stack.pop(0)))
+                            except Exception as e:
+                                BrainFuckSharp.std.err.write(f"FileError: Could not write to file '{file}'")
+                                sys.exit(1)
                             
                         
                 
             ptr = max(0, min(cells_size - 1, ptr))
             for j, v in enumerate(cells):
-                cells[j] = max(0, min(255, v))     
+                cells[j] = max(0, min(sys.maxunicode, v))     
             i += 1
 
         return cells
@@ -190,14 +207,14 @@ class BrainFuckSharp:
         ptr = 0
         i = 0
         code = BrainFuckSharp.parse(code)
-        tokens = re.findall(r'[+\-<>\[\].,%!?^#\{\}\(\)]|\$\d+|&\d+|\*\d+|"(?:[^"]|\\.)*"|/\d*/|~\d+', code)
+        tokens = re.findall(r'[+\-<>\[\].,%!?^#\{\}\(\)]|\$\d+|&\d+|\*\d+|"(?:[^"]|\\.)*"|/\d*/|~\d+|r`[^`]*`|w`[^`]*`', code)
         loop_stack = [[], []]
 
         while i < len(tokens):
             token = tokens[i]
             match token:
-                case '+': cells[ptr] = (cells[ptr] + 1) % 256
-                case '-': cells[ptr] = (cells[ptr] - 1) % 256
+                case '+': cells[ptr] = (cells[ptr] + 1) % sys.maxunicode
+                case '-': cells[ptr] = (cells[ptr] - 1) % sys.maxunicode
                 case '>': ptr = (ptr + 1) % cells_size
                 case '<': ptr = (ptr - 1) % cells_size
                 case '[':
@@ -283,12 +300,31 @@ class BrainFuckSharp:
                         case '~':
                             r = int(token[1:]) if len(token) > 1 else 0 != 0
                             if r != 0:
-                                errors.append(BrainFuckSharp.std.err.new(r))
+                                errors.append(BrainFuckSharp.std.err.new(f"ExitError: Program would exit with code {r}"))
                             return errors
+                        case 'r':
+                            file = token[2:-1]
+                            try:
+                                with open(file, 'r') as f:
+                                    content = f.read()
+                                stack.append(content)
+                            except Exception as e:
+                                errors.append(BrainFuckSharp.std.err.new(f"FileError: Could not read file '{file}'"))
+                                return errors
+                        case 'w':
+                            file = token[2:-1]
+                            try:
+                                with open(file, 'w') as f:
+                                    f.write(str(stack.pop(0)))
+                                os.rmdir(file)
+                            except Exception as e:
+                                errors.append(BrainFuckSharp.std.err.new(f"FileError: Could not write to file '{file}'"))
+                                return errors
+                        
 
             ptr = max(0, min(cells_size - 1, ptr))
             for j, v in enumerate(cells):
-                cells[j] = max(0, min(255, v))     
+                cells[j] = max(0, min(sys.maxunicode, v))     
             i += 1
             if errors:
                 return errors
