@@ -6,353 +6,267 @@ del init
 
 
 class BrainFuckSharp:
+    # =========================
+    #   BF# STD ERROR SYSTEM
+    # =========================
     class std:
         class err:
             @classmethod
             def new(cls, *args, sep=" ", end="\n", color=Fore.RED + Style.BRIGHT):
                 self = cls()
-                self.write = lambda : cls.write(*args, sep=sep, end=end, color=color)
+                self.write = lambda: cls.write(*args, sep=sep, end=end, color=color)
                 return self
-            
+
             @staticmethod
             def write(*args, sep=" ", end="\n", color=Fore.RED + Style.BRIGHT):
                 text = sep.join(map(str, args)) + end
                 sys.stderr.write(color + text + Style.RESET_ALL)
                 sys.stderr.flush()
     
+BrainFuckSharp.__name__ = "BrainFuck#"
+
+
+class Interpreter:
+    # =========================
+    #   LEXER CONSTANTS
+    # =========================
+    HEX = r'[0-9A-Fa-f]'  # SIN +
+
+    # =========================
+    #   INIT
+    # =========================
     def __init__(self, cells_size=30000):
         self.cells_size = cells_size
         self.cells = [0] * cells_size
 
+    # =========================
+    #   IMPORTS
+    # =========================
     @staticmethod
     def parse_imports(code, base_path=None):
         imports = re.findall(r'@\s*([^;]+);', code)
         for module in imports:
             module_path = module if base_path is None else os.path.join(base_path, module)
             if not os.path.isfile(module_path):
-                raise ImportError(f"Module '{module}' not found at '{module_path}'")
-            with open(module_path, 'r') as f:
+                raise ImportError(f"Module '{module}' not found")
+
+            with open(module_path, "r", encoding="utf-8") as f:
                 module_code = f.read()
+
             code = re.sub(r'@\s*' + re.escape(module) + r';', module_code, code)
         return code
 
+    # =========================
+    #   EXPANSIONS (+HEX -HEX =HEX)
+    # =========================
     @staticmethod
     def parse_to_standar(code):
-        code = re.sub(r"\+(\d+)", lambda m: '+' * int(m.group(1)), code)
-        code = re.sub(r"\-(\d+)", lambda m: '-' * int(m.group(1)), code)
-        code = re.sub(r"=(\d+)", lambda m: f"[-]{'+'*int(m.group(1))}", code)
+        code = re.sub(
+            r"\+([0-9A-Fa-f]+)",
+            lambda m: "+" * int(m.group(1), 16),
+            code
+        )
+        code = re.sub(
+            r"\-([0-9A-Fa-f]+)",
+            lambda m: "-" * int(m.group(1), 16),
+            code
+        )
+        code = re.sub(
+            r"\=([0-9A-Fa-f]+)",
+            lambda m: f"[-]{'+' * int(m.group(1), 16)}",
+            code
+        )
         return code
 
+    # =========================
+    #   PRE-PARSE
+    # =========================
     @staticmethod
     def parse(code, base_path=None):
-        i = 0
+        code = code or ""
+
+        # comments
         code = re.sub(r"\|[^|]*\|", "", code, flags=re.DOTALL)
         code = re.sub(r"\|.*", "", code)
-        
-        while re.search(r'@\s*([^;]+);', code):
-            code = BrainFuckSharp.parse_imports(code, base_path)
-            i  += 1
-            if i > 0xFFF:
-                BrainFuckSharp.std.err.write("ImportError: Possible infinite import loop detected.")
-                BrainFuckSharp.std.err.write("RecursionError: Maximum import depth exceeded.")
-                sys.exit(1)
-        code = BrainFuckSharp.parse_to_standar(code)
-        return code
 
+        # imports
+        depth = 0
+        while re.search(r'@\s*([^;]+);', code):
+            code = Interpreter.parse_imports(code, base_path)
+            depth += 1
+            if depth > 0xFFF:
+                BrainFuckSharp.std.err.write("ImportError: Infinite import loop")
+                sys.exit(1)
+
+        return Interpreter.parse_to_standar(code)
+
+    # =========================
+    #   TOKENIZER (HEX REAL)
+    # =========================
     @staticmethod
-    def run(code=None, cells_size=None):
-        if code is None:
-            code = ""
-        if cells_size is None:
-            cells_size = 30000
+    def tokenize(code):
+        H = Interpreter.HEX
+        token_re = (
+            rf'[+\-<>\[\].,%!?^#\{{\}}\(\)]'
+            rf'|\${H}+'
+            rf'|&{H}+'
+            rf'|\*{H}+'
+            rf'|/{H}+/'
+            rf'|~{H}+'
+            rf'|"(?:[^"]|\\.)*"'
+            rf'|r`[^`]*`'
+            rf'|w`[^`]*`'
+        )
+        return re.findall(token_re, code)
+
+    # =========================
+    #   VM CORE
+    # =========================
+    @staticmethod
+    def run(code=None, cells_size=30000):
         cells = [0] * cells_size
         stack = []
         ptr = 0
-        i = 0
-        code = BrainFuckSharp.parse(code)
-        tokens = re.findall(r'[+\-<>\[\].,%!?^#\{\}\(\)]|\$\d+|&\d+|\*\d+|"(?:[^"]|\\.)*"|/\d*/|~\d+|r`[^`]*`|w`[^`]*`', code)
+
+        tokens = Interpreter.tokenize(Interpreter.parse(code))
         loop_stack = [[], []]
+        i = 0
 
         while i < len(tokens):
-            token = tokens[i]
-            match token:
+            t = tokens[i]
+
+            match t:
                 case '+': cells[ptr] = (cells[ptr] + 1) % sys.maxunicode
                 case '-': cells[ptr] = (cells[ptr] - 1) % sys.maxunicode
                 case '>': ptr = (ptr + 1) % cells_size
                 case '<': ptr = (ptr - 1) % cells_size
-                case '.': print(chr(cells[ptr]), end='')
-                case ',': cells[ptr] = ord(input()[0])
+                case '.': print(chr(cells[ptr]), end="")
+                case ',': cells[ptr] = ord(input()[:1] or '\0')
+
                 case '[':
                     if cells[ptr] == 0:
-                        open_sqr_brackets = 1
-                        while open_sqr_brackets != 0:
+                        d = 1
+                        while d:
                             i += 1
-                            if tokens[i] == '[': open_sqr_brackets += 1
-                            elif tokens[i] == ']': open_sqr_brackets -= 1
+                            if tokens[i] == '[': d += 1
+                            elif tokens[i] == ']': d -= 1
                     else:
                         loop_stack[0].append(i)
+
                 case ']':
-                    if cells[ptr] != 0: i = loop_stack[0][-1]
-                    else: loop_stack[0].pop()
-                case '%':
-                    return cells
-                case '!':
-                    if not stack:
-                        BrainFuckSharp.std.err.write("StackError: Attempt to read and remove from an empty stack.")
-                        sys.exit(1)
-                    cells[ptr] = stack.pop(0)
-                case '?':
-                    if not stack:
-                        BrainFuckSharp.std.err.write("StackError: Attempt to read from an empty stack.")
-                        sys.exit(1)
-                    cells[ptr] = stack[0]
-                case '#':
-                    if not stack:
-                        BrainFuckSharp.std.err.write("StackError: Attempt to reverse an empty stack.")
-                        sys.exit(1)
-                    stack.reverse()
+                    if cells[ptr] != 0:
+                        i = loop_stack[0][-1]
+                    else:
+                        loop_stack[0].pop()
+
                 case '{':
                     if cells[ptr] != 0:
-                        open_brackets = 1
-                        while open_brackets != 0:
+                        d = 1
+                        while d:
                             i += 1
-                            if tokens[i] == '{': open_brackets += 1
-                            elif tokens[i] == '}': open_brackets -= 1
+                            if tokens[i] == '{': d += 1
+                            elif tokens[i] == '}': d -= 1
                     else:
                         loop_stack[1].append(i)
+
                 case '}':
-                    if cells[ptr] == 0: i = loop_stack[1][-1]
-                    else: loop_stack[1].pop()
-                case '(':
                     if cells[ptr] == 0:
-                        open_brackets = 1
-                        while open_brackets != 0:
-                            i += 1
-                            if tokens[i] == '(': open_brackets += 1
-                            elif tokens[i] == ')': open_brackets -= 1
-                case '^':
-                    stack.insert(0, cells[ptr])
-                case _: # "tokens" de mas de un caracter (patrones)
-                    match token[0]:
-                        case '$':
-                            value = int(token[1:])
-                            time.sleep(value / 1000)
-                        case '&':
-                            value = int(token[1:])
-                            if value == 0:
-                                ptr = cells[ptr]
-                            else:
-                                if len(stack) < value:
-                                    BrainFuckSharp.std.err.write("StackError: Not enough values in stack for '&' operation.")
-                                    sys.exit(1)
-                                stack[value-1] = cells[ptr]
-                        case '*':
-                            value = int(token[1:])
-                            if value == 0:
-                                cells[ptr] = ptr
-                            else:
-                                if len(stack) < value:
-                                    BrainFuckSharp.std.err.write("StackError: Not enough values in stack for '*' operation.")
-                                    sys.exit(1)
-                                cells[ptr] = stack[value - 1]
-                        case '"':
-                            strCont = token[1:-2]
-                            stack.append(strCont)
-                        case '/':
-                            errIndex = int(token[1:-1])
-                            if len(stack) < errIndex:
-                                BrainFuckSharp.std.err.write("StackError: Not enough values in stack for '/' operation.")
-                                sys.exit(1)
-                            elif 1 >= errIndex:
-                                BrainFuckSharp.std.err.write("StackError: '/' operation requires an index greater than 1.")
-                            BrainFuckSharp.std.err.write(stack[errIndex-1])
-                        case '~':
-                            sys.exit(int(token[1:]) if len(token) > 1 else 0)
-                        case 'r':
-                            file = token[2:-1]
-                            try:
-                                with open(file, 'r') as f:
-                                    content = f.read()
-                                stack.append(content)
-                            except Exception as e:
-                                BrainFuckSharp.std.err.write(f"FileError: Could not read file '{file}'")
-                                sys.exit(1)
-                        case 'w':
-                            file = token[2:-1]
-                            try:
-                                with open(file, 'w') as f:
-                                    f.write(str(stack.pop(0)))
-                            except Exception as e:
-                                BrainFuckSharp.std.err.write(f"FileError: Could not write to file '{file}'")
-                                sys.exit(1)
-                            
-                        
-                
-            ptr = max(0, min(cells_size - 1, ptr))
-            for j, v in enumerate(cells):
-                cells[j] = max(0, min(sys.maxunicode, v))     
+                        i = loop_stack[1][-1]
+                    else:
+                        loop_stack[1].pop()
+
+                case '^': stack.insert(0, cells[ptr])
+                case '!': cells[ptr] = stack.pop(0)
+                case '?': cells[ptr] = stack[0]
+                case '#': stack.reverse()
+                case '%': return cells
+
+                case _:
+                    op = t[0]
+
+                    if op == '$':
+                        time.sleep(int(t[1:], 16) / 1000)
+
+                    elif op == '&':
+                        n = int(t[1:], 16)
+                        if n == 0:
+                            ptr = cells[ptr] % cells_size
+                        else:
+                            stack[n - 1] = cells[ptr]
+
+                    elif op == '*':
+                        n = int(t[1:], 16)
+                        cells[ptr] = ptr if n == 0 else stack[n - 1]
+
+                    elif op == '"':
+                        stack.append(t[1:-1])
+
+                    elif op == '/':
+                        BrainFuckSharp.std.err.write(stack[int(t[1:-1], 16) - 1])
+
+                    elif op == '~':
+                        sys.exit(int(t[1:], 16))
+
+                    elif op == 'r':
+                        with open(t[2:-1], "r", encoding="utf-8") as f:
+                            stack.append(f.read())
+
+                    elif op == 'w':
+                        with open(t[2:-1], "w", encoding="utf-8") as f:
+                            f.write(str(stack.pop(0)))
+
             i += 1
 
         return cells
-    
+
+    # =========================
+    #   VERIFY (PURE)
+    # =========================
     @staticmethod
-    def verify(code=None, cells_size=None):
-        errors = []
-        if code is None:
-            code = ""
-        if cells_size is None:
-            cells_size = 30000
-        cells = [0] * cells_size
-        stack = []
-        ptr = 0
-        i = 0
-        code = BrainFuckSharp.parse(code)
-        tokens = re.findall(r'[+\-<>\[\].,%!?^#\{\}\(\)]|\$\d+|&\d+|\*\d+|"(?:[^"]|\\.)*"|/\d*/|~\d+|r`[^`]*`|w`[^`]*`', code)
-        loop_stack = [[], []]
+    def verify(code=None, cells_size=30000):
+        try:
+            Interpreter.run(code, cells_size)
+            return []
+        except SystemExit as e:
+            if e.code:
+                return [BrainFuckSharp.std.err.new(f"ExitError: {e.code}")]
+            return []
+        except Exception as e:
+            return [BrainFuckSharp.std.err.new(f"VerifyError: {e}")]
 
-        while i < len(tokens):
-            token = tokens[i]
-            match token:
-                case '+': cells[ptr] = (cells[ptr] + 1) % sys.maxunicode
-                case '-': cells[ptr] = (cells[ptr] - 1) % sys.maxunicode
-                case '>': ptr = (ptr + 1) % cells_size
-                case '<': ptr = (ptr - 1) % cells_size
-                case '[':
-                    if cells[ptr] == 0:
-                        open_sqr_brackets = 1
-                        while open_sqr_brackets != 0:
-                            i += 1
-                            if tokens[i] == '[': open_sqr_brackets += 1
-                            elif tokens[i] == ']': open_sqr_brackets -= 1
-                    else:
-                        loop_stack[0].append(i)
-                case ']':
-                    if cells[ptr] != 0: i = loop_stack[0][-1]
-                    else: loop_stack[0].pop()
-                case '%':
-                    return cells
-                case '!':
-                    if not stack:
-                        errors.append(BrainFuckSharp.std.err.new("StackError: Attempt to read and remove from an empty stack."))
-                        sys.exit(1)
-                    cells[ptr] = stack.pop(0)
-                case '?':
-                    if not stack:
-                        errors.append(BrainFuckSharp.std.err.new("StackError: Attempt to read from an empty stack."))
-                        sys.exit(1)
-                    cells[ptr] = stack[0]
-                case '#':
-                    if not stack:
-                        errors.append(BrainFuckSharp.std.err.new("StackError: Attempt to reverse an empty stack."))
-                        sys.exit(1)
-                    stack.reverse()
-                case '{':
-                    if cells[ptr] != 0:
-                        open_brackets = 1
-                        while open_brackets != 0:
-                            i += 1
-                            if tokens[i] == '{': open_brackets += 1
-                            elif tokens[i] == '}': open_brackets -= 1
-                    else:
-                        loop_stack[1].append(i)
-                case '}':
-                    if cells[ptr] == 0: i = loop_stack[1][-1]
-                    else: loop_stack[1].pop()
-                case '(':
-                    if cells[ptr] == 0:
-                        open_brackets = 1
-                        while open_brackets != 0:
-                            i += 1
-                            if tokens[i] == '(': open_brackets += 1
-                            elif tokens[i] == ')': open_brackets -= 1
-                case '^':
-                    stack.insert(0, cells[ptr])
-                case _: # "tokens" de mas de un caracter (patrones)
-                    match token[0]:
-                        case '&':
-                            value = int(token[1:])
-                            if value == 0:
-                                ptr = cells[ptr]
-                            else:
-                                if len(stack) < value:
-                                    errors.append(BrainFuckSharp.std.err.new("StackError: Not enough values in stack for '&' operation."))
-                                    sys.exit(1)
-                                stack[value-1] = cells[ptr]
-                        case '*':
-                            value = int(token[1:])
-                            if value == 0:
-                                cells[ptr] = ptr
-                            else:
-                                if len(stack) < value:
-                                    errors.append(BrainFuckSharp.std.err.new("StackError: Not enough values in stack for '*' operation."))
-                                    sys.exit(1)
-                                cells[ptr] = stack[value - 1]
-                        case '"':
-                            strCont = token[1:-2]
-                            stack.append(strCont)
-                        case '/':
-                            errIndex = int(token[1:-1])
-                            if len(stack) < errIndex:
-                                errors.append(BrainFuckSharp.std.err.new("StackError: Not enough values in stack for '/' operation."))
-                            elif 1 >= errIndex:
-                                errors.append(BrainFuckSharp.std.err.new("StackError: '/' operation requires an index greater than 1."))
-                            errors.append(BrainFuckSharp.std.err.new(stack[errIndex-1]))
-                        case '~':
-                            r = int(token[1:]) if len(token) > 1 else 0 != 0
-                            if r != 0:
-                                errors.append(BrainFuckSharp.std.err.new(f"ExitError: Program would exit with code {r}"))
-                            return errors
-                        case 'r':
-                            file = token[2:-1]
-                            try:
-                                with open(file, 'r') as f:
-                                    content = f.read()
-                                stack.append(content)
-                            except Exception as e:
-                                errors.append(BrainFuckSharp.std.err.new(f"FileError: Could not read file '{file}'"))
-                                return errors
-                        case 'w':
-                            file = token[2:-1]
-                            try:
-                                with open(file, 'w') as f:
-                                    f.write(str(stack.pop(0)))
-                                os.rmdir(file)
-                            except Exception as e:
-                                errors.append(BrainFuckSharp.std.err.new(f"FileError: Could not write to file '{file}'"))
-                                return errors
-                        
+    # =========================
+    #   CALL
+    # =========================
+    def __call__(self, code=None, returnCells=False, verify=False) -> Interpreter | list:
+        if verify:
+            errs = self.verify(code, self.cells_size)
+            if errs:
+                for e in errs:
+                    e.write()
+                sys.exit(1)
 
-            ptr = max(0, min(cells_size - 1, ptr))
-            for j, v in enumerate(cells):
-                cells[j] = max(0, min(sys.maxunicode, v))     
-            i += 1
-            if errors:
-                return errors
-        return errors
+        self.cells = self.run(code, self.cells_size)
+        return self.cells if returnCells else self
 
-    def __call__(self, code=None, returnCells=False, verify=False):
-        if not verify:
-            self.cells = type(self).run(code, self.cells_size)
-            return self if not returnCells else self.cells
-        errors = type(self).verify(code, self.cells_size)
-        if errors:
-            for err in errors:
-                err.write()
-            sys.exit(1)
-        else:
-            self(code, returnCells, False)
 
+runner = type("bf#", (object,), {
+    "run": staticmethod(lambda code, cells_size=30000, verify=False: Interpreter(cells_size)(code, True, verify)),
+    "__call__": lambda self, code=None, cells_size=30000, returnCells=False, verify=False: Interpreter(cells_size)(code, returnCells, verify)
+})
+
+
+# =========================
+#   CLI
+# =========================
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         BrainFuckSharp.std.err.write("Uso: python bfsi.py archivo.bfs [--verify]")
         sys.exit(1)
-    elif len(sys.argv) == 2 and sys.argv[1] in ("-h", "--help", "help"):
-        print("Uso: python bfsi.py archivo.bfs [--verify]")
-        sys.exit(0)
-    mainFile = sys.argv[1]
-    with open(mainFile, 'r') as f:
+
+    with open(sys.argv[1], "r", encoding="utf-8") as f:
         code = f.read()
-    if len(sys.argv) >= 3 and ("-verify" in sys.argv[2:] or "--verify" in sys.argv[2:] or "verify" in sys.argv[2:]):
-        BrainFuckSharp().__call__(code, verify=True)
-        sys.exit(0)
-    BrainFuckSharp.run(code)
+
+    if "--verify" in sys.argv:
+        Interpreter().verify(code)
+    else:
+        Interpreter.run(code)
